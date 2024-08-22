@@ -73,6 +73,11 @@ impl<F: PrimeField> CircomBuilder<F> {
         values.push(val.into());
     }
 
+    // Method to push multiple inputs from a HashMap
+    pub fn push_inputs(&mut self, inputs: HashMap<String, Vec<BigInt>>) {
+        self.inputs = inputs;
+    }
+
     /// Generates an empty circom circuit with no witness set, to be used for
     /// generation of the trusted setup parameters
     pub fn setup(&self) -> CircomCircuit<F> {

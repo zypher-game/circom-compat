@@ -206,7 +206,7 @@ fn read_constraint_vec<R: Read, F: PrimeField>(mut reader: R) -> IoResult<Constr
     for _ in 0..n_vec {
         vec.push((
             reader.read_u32::<LittleEndian>()? as usize,
-            F::deserialize_uncompressed(&mut reader)?,
+            F::deserialize_uncompressed_unchecked(&mut reader)?,
         ));
     }
     Ok(vec)
