@@ -25,8 +25,8 @@
 //!  PointsC(8)
 //!  PointsH(9)
 //!  Contributions(10)
-use ark_ff::PrimeField;
 use ark_ec::pairing::Pairing;
+use ark_ff::PrimeField;
 use ark_relations::r1cs::ConstraintMatrices;
 use ark_serialize::{CanonicalDeserialize, SerializationError};
 use ark_std::log2;
@@ -40,8 +40,8 @@ use std::{
 
 use ark_groth16::{ProvingKey, VerifyingKey};
 
-use ark_bn254::{Bn254, Fr as Bn254_Fr};
 use ark_bls12_381::{Bls12_381, Fr as Bls12_381_Fr};
+use ark_bn254::{Bn254, Fr as Bn254_Fr};
 
 type IoResult<T> = Result<T, SerializationError>;
 
@@ -84,7 +84,7 @@ struct BinFile<'a, R, E> {
     version: u32,
     sections: HashMap<u32, Vec<Section>>,
     reader: &'a mut R,
-    _phantom: PhantomData<&'a E>
+    _phantom: PhantomData<&'a E>,
 }
 
 impl<'a, R: Read + Seek, E: Pairing> BinFile<'a, R, E> {
@@ -348,9 +348,9 @@ fn deserialize_field_fr<R: Read, F: PrimeField>(reader: &mut R) -> IoResult<F> {
 
 // skips the multiplication by R because Circom points are already in Montgomery form
 // fn deserialize_field<R: Read, F: PrimeField>(reader: &mut R) -> IoResult<F> {
-    // let bigint = F::BigInt::deserialize_uncompressed(reader)?;
-    // if you use Fq::new it multiplies by R
-    // Ok(F::new_unchecked(bigint))
+// let bigint = F::BigInt::deserialize_uncompressed(reader)?;
+// if you use Fq::new it multiplies by R
+// Ok(F::new_unchecked(bigint))
 // }
 
 // pub fn deserialize_field2<R: Read, F: PrimeField>(reader: &mut R) -> IoResult<F> {
@@ -385,12 +385,22 @@ fn deserialize_g2<R: Read, E: Pairing>(reader: &mut R) -> IoResult<E::G2Affine> 
     Ok(g)
 }
 
-fn deserialize_g1_vec<R: Read, E: Pairing>(reader: &mut R, n_vars: u32) -> IoResult<Vec<E::G1Affine>> {
-    (0..n_vars).map(|_| deserialize_g1::<R, E>(reader)).collect()
+fn deserialize_g1_vec<R: Read, E: Pairing>(
+    reader: &mut R,
+    n_vars: u32,
+) -> IoResult<Vec<E::G1Affine>> {
+    (0..n_vars)
+        .map(|_| deserialize_g1::<R, E>(reader))
+        .collect()
 }
 
-fn deserialize_g2_vec<R: Read, E: Pairing>(reader: &mut R, n_vars: u32) -> IoResult<Vec<E::G2Affine>> {
-    (0..n_vars).map(|_| deserialize_g2::<R, E>(reader)).collect()
+fn deserialize_g2_vec<R: Read, E: Pairing>(
+    reader: &mut R,
+    n_vars: u32,
+) -> IoResult<Vec<E::G2Affine>> {
+    (0..n_vars)
+        .map(|_| deserialize_g2::<R, E>(reader))
+        .collect()
 }
 
 #[cfg(test)]

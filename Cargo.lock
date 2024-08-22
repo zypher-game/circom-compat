@@ -115,6 +115,7 @@ dependencies = [
 name = "ark-circom"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "ark-bls12-381",
  "ark-bn254",
  "ark-crypto-primitives",
@@ -124,11 +125,13 @@ dependencies = [
  "ark-poly",
  "ark-relations",
  "ark-serialize",
+ "ark-snark",
  "ark-std",
  "byteorder",
  "cfg-if",
  "color-eyre",
  "criterion",
+ "ethabi",
  "ethers",
  "ethers-core",
  "fnv",
@@ -137,6 +140,7 @@ dependencies = [
  "num",
  "num-bigint",
  "num-traits",
+ "rand_chacha",
  "rayon",
  "serde_json",
  "thiserror",
