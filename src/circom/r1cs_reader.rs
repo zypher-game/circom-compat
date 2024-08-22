@@ -177,15 +177,15 @@ impl Header {
         let mut prime_size = vec![0u8; field_size as usize];
         reader.read_exact(&mut prime_size)?;
 
-        if prime_size
-            != hex::decode("010000f093f5e1439170b97948e833285d588181b64550b829a031e1724e6430")
-                .unwrap()
-        {
-            return Err(IoError(Error::new(
-                ErrorKind::InvalidData,
-                "This parser only supports bn256",
-            )));
-        }
+        // if prime_size
+        //     != hex::decode("010000f093f5e1439170b97948e833285d588181b64550b829a031e1724e6430")
+        //         .unwrap()
+        // {
+        //     return Err(IoError(Error::new(
+        //         ErrorKind::InvalidData,
+        //         "This parser only supports bn256",
+        //     )));
+        // }
 
         Ok(Header {
             field_size,

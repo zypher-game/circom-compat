@@ -25,7 +25,8 @@
 //!  PointsC(8)
 //!  PointsH(9)
 //!  Contributions(10)
-use ark_ff::{BigInteger256, PrimeField};
+use ark_ff::PrimeField;
+use ark_ec::pairing::Pairing;
 use ark_relations::r1cs::ConstraintMatrices;
 use ark_serialize::{CanonicalDeserialize, SerializationError};
 use ark_std::log2;
@@ -34,11 +35,13 @@ use byteorder::{LittleEndian, ReadBytesExt};
 use std::{
     collections::HashMap,
     io::{Read, Seek, SeekFrom},
+    marker::PhantomData,
 };
 
-use ark_bn254::{Bn254, Fq, Fq2, Fr, G1Affine, G2Affine};
 use ark_groth16::{ProvingKey, VerifyingKey};
-use num_traits::Zero;
+
+use ark_bn254::{Bn254, Fr as Bn254_Fr};
+use ark_bls12_381::{Bls12_381, Fr as Bls12_381_Fr};
 
 type IoResult<T> = Result<T, SerializationError>;
 
@@ -50,9 +53,23 @@ struct Section {
 }
 
 /// Reads a SnarkJS ZKey file into an Arkworks ProvingKey.
-pub fn read_zkey<R: Read + Seek>(
+pub fn read_bn254_zkey<R: Read + Seek>(
     reader: &mut R,
-) -> IoResult<(ProvingKey<Bn254>, ConstraintMatrices<Fr>)> {
+) -> IoResult<(ProvingKey<Bn254>, ConstraintMatrices<Bn254_Fr>)> {
+    read_zkey::<R, Bn254>(reader)
+}
+
+/// Reads a SnarkJS ZKey file into an Arkworks ProvingKey.
+pub fn read_bls12_381_zkey<R: Read + Seek>(
+    reader: &mut R,
+) -> IoResult<(ProvingKey<Bls12_381>, ConstraintMatrices<Bls12_381_Fr>)> {
+    read_zkey::<R, Bls12_381>(reader)
+}
+
+/// Reads a SnarkJS ZKey file into an Arkworks ProvingKey.
+pub fn read_zkey<R: Read + Seek, E: Pairing>(
+    reader: &mut R,
+) -> IoResult<(ProvingKey<E>, ConstraintMatrices<E::ScalarField>)> {
     let mut binfile = BinFile::new(reader)?;
     let proving_key = binfile.proving_key()?;
     let matrices = binfile.matrices()?;
@@ -60,16 +77,17 @@ pub fn read_zkey<R: Read + Seek>(
 }
 
 #[derive(Debug)]
-struct BinFile<'a, R> {
+struct BinFile<'a, R, E> {
     #[allow(dead_code)]
     ftype: String,
     #[allow(dead_code)]
     version: u32,
     sections: HashMap<u32, Vec<Section>>,
     reader: &'a mut R,
+    _phantom: PhantomData<&'a E>
 }
 
-impl<'a, R: Read + Seek> BinFile<'a, R> {
+impl<'a, R: Read + Seek, E: Pairing> BinFile<'a, R, E> {
     fn new(reader: &'a mut R) -> IoResult<Self> {
         let mut magic = [0u8; 4];
         reader.read_exact(&mut magic)?;
@@ -97,10 +115,11 @@ impl<'a, R: Read + Seek> BinFile<'a, R> {
             version,
             sections,
             reader,
+            _phantom: PhantomData,
         })
     }
 
-    fn proving_key(&mut self) -> IoResult<ProvingKey<Bn254>> {
+    fn proving_key(&mut self) -> IoResult<ProvingKey<E>> {
         let header = self.groth_header()?;
         let ic = self.ic(header.n_public)?;
 
@@ -110,7 +129,7 @@ impl<'a, R: Read + Seek> BinFile<'a, R> {
         let l_query = self.l_query(header.n_vars - header.n_public - 1)?;
         let h_query = self.h_query(header.domain_size as usize)?;
 
-        let vk = VerifyingKey::<Bn254> {
+        let vk = VerifyingKey::<E> {
             alpha_g1: header.verifying_key.alpha_g1,
             beta_g2: header.verifying_key.beta_g2,
             gamma_g2: header.verifying_key.gamma_g2,
@@ -118,7 +137,7 @@ impl<'a, R: Read + Seek> BinFile<'a, R> {
             gamma_abc_g1: ic,
         };
 
-        let pk = ProvingKey::<Bn254> {
+        let pk = ProvingKey::<E> {
             vk,
             beta_g1: header.verifying_key.beta_g1,
             delta_g1: header.verifying_key.delta_g1,
@@ -136,19 +155,19 @@ impl<'a, R: Read + Seek> BinFile<'a, R> {
         self.sections.get(&id).unwrap()[0].clone()
     }
 
-    fn groth_header(&mut self) -> IoResult<HeaderGroth> {
+    fn groth_header(&mut self) -> IoResult<HeaderGroth<E>> {
         let section = self.get_section(2);
         let header = HeaderGroth::new(&mut self.reader, &section)?;
         Ok(header)
     }
 
-    fn ic(&mut self, n_public: usize) -> IoResult<Vec<G1Affine>> {
+    fn ic(&mut self, n_public: usize) -> IoResult<Vec<E::G1Affine>> {
         // the range is non-inclusive so we do +1 to get all inputs
         self.g1_section(n_public + 1, 3)
     }
 
     /// Returns the [`ConstraintMatrices`] corresponding to the zkey
-    pub fn matrices(&mut self) -> IoResult<ConstraintMatrices<Fr>> {
+    pub fn matrices(&mut self) -> IoResult<ConstraintMatrices<E::ScalarField>> {
         let header = self.groth_header()?;
 
         let section = self.get_section(4);
@@ -163,7 +182,7 @@ impl<'a, R: Read + Seek> BinFile<'a, R> {
             let constraint: u32 = self.reader.read_u32::<LittleEndian>()?;
             let signal: u32 = self.reader.read_u32::<LittleEndian>()?;
 
-            let value: Fr = deserialize_field_fr(&mut self.reader)?;
+            let value: E::ScalarField = deserialize_field_fr(&mut self.reader)?;
             max_constraint_index = std::cmp::max(max_constraint_index, constraint);
             matrices[matrix as usize][constraint as usize].push((value, signal as usize));
         }
@@ -195,57 +214,57 @@ impl<'a, R: Read + Seek> BinFile<'a, R> {
         Ok(matrices)
     }
 
-    fn a_query(&mut self, n_vars: usize) -> IoResult<Vec<G1Affine>> {
+    fn a_query(&mut self, n_vars: usize) -> IoResult<Vec<E::G1Affine>> {
         self.g1_section(n_vars, 5)
     }
 
-    fn b_g1_query(&mut self, n_vars: usize) -> IoResult<Vec<G1Affine>> {
+    fn b_g1_query(&mut self, n_vars: usize) -> IoResult<Vec<E::G1Affine>> {
         self.g1_section(n_vars, 6)
     }
 
-    fn b_g2_query(&mut self, n_vars: usize) -> IoResult<Vec<G2Affine>> {
+    fn b_g2_query(&mut self, n_vars: usize) -> IoResult<Vec<E::G2Affine>> {
         self.g2_section(n_vars, 7)
     }
 
-    fn l_query(&mut self, n_vars: usize) -> IoResult<Vec<G1Affine>> {
+    fn l_query(&mut self, n_vars: usize) -> IoResult<Vec<E::G1Affine>> {
         self.g1_section(n_vars, 8)
     }
 
-    fn h_query(&mut self, n_vars: usize) -> IoResult<Vec<G1Affine>> {
+    fn h_query(&mut self, n_vars: usize) -> IoResult<Vec<E::G1Affine>> {
         self.g1_section(n_vars, 9)
     }
 
-    fn g1_section(&mut self, num: usize, section_id: usize) -> IoResult<Vec<G1Affine>> {
+    fn g1_section(&mut self, num: usize, section_id: usize) -> IoResult<Vec<E::G1Affine>> {
         let section = self.get_section(section_id as u32);
         self.reader.seek(SeekFrom::Start(section.position))?;
-        deserialize_g1_vec(self.reader, num as u32)
+        deserialize_g1_vec::<R, E>(self.reader, num as u32)
     }
 
-    fn g2_section(&mut self, num: usize, section_id: usize) -> IoResult<Vec<G2Affine>> {
+    fn g2_section(&mut self, num: usize, section_id: usize) -> IoResult<Vec<E::G2Affine>> {
         let section = self.get_section(section_id as u32);
         self.reader.seek(SeekFrom::Start(section.position))?;
-        deserialize_g2_vec(self.reader, num as u32)
+        deserialize_g2_vec::<R, E>(self.reader, num as u32)
     }
 }
 
 #[derive(Default, Clone, Debug, CanonicalDeserialize)]
-pub struct ZVerifyingKey {
-    alpha_g1: G1Affine,
-    beta_g1: G1Affine,
-    beta_g2: G2Affine,
-    gamma_g2: G2Affine,
-    delta_g1: G1Affine,
-    delta_g2: G2Affine,
+pub struct ZVerifyingKey<E: Pairing> {
+    alpha_g1: E::G1Affine,
+    beta_g1: E::G1Affine,
+    beta_g2: E::G2Affine,
+    gamma_g2: E::G2Affine,
+    delta_g1: E::G1Affine,
+    delta_g2: E::G2Affine,
 }
 
-impl ZVerifyingKey {
+impl<E: Pairing> ZVerifyingKey<E> {
     fn new<R: Read>(reader: &mut R) -> IoResult<Self> {
-        let alpha_g1 = deserialize_g1(reader)?;
-        let beta_g1 = deserialize_g1(reader)?;
-        let beta_g2 = deserialize_g2(reader)?;
-        let gamma_g2 = deserialize_g2(reader)?;
-        let delta_g1 = deserialize_g1(reader)?;
-        let delta_g2 = deserialize_g2(reader)?;
+        let alpha_g1 = deserialize_g1::<R, E>(reader)?;
+        let beta_g1 = deserialize_g1::<R, E>(reader)?;
+        let beta_g2 = deserialize_g2::<R, E>(reader)?;
+        let gamma_g2 = deserialize_g2::<R, E>(reader)?;
+        let delta_g1 = deserialize_g1::<R, E>(reader)?;
+        let delta_g2 = deserialize_g2::<R, E>(reader)?;
 
         Ok(Self {
             alpha_g1,
@@ -259,15 +278,15 @@ impl ZVerifyingKey {
 }
 
 #[derive(Clone, Debug)]
-struct HeaderGroth {
+struct HeaderGroth<E: Pairing> {
     #[allow(dead_code)]
     n8q: u32,
     #[allow(dead_code)]
-    q: BigInteger256,
+    q: <E::BaseField as PrimeField>::BigInt,
     #[allow(dead_code)]
     n8r: u32,
     #[allow(dead_code)]
-    r: BigInteger256,
+    r: <E::ScalarField as PrimeField>::BigInt,
 
     n_vars: usize,
     n_public: usize,
@@ -276,10 +295,10 @@ struct HeaderGroth {
     #[allow(dead_code)]
     power: u32,
 
-    verifying_key: ZVerifyingKey,
+    verifying_key: ZVerifyingKey<E>,
 }
 
-impl HeaderGroth {
+impl<E: Pairing> HeaderGroth<E> {
     fn new<R: Read + Seek>(reader: &mut R, section: &Section) -> IoResult<Self> {
         reader.seek(SeekFrom::Start(section.position))?;
         Self::read(reader)
@@ -289,11 +308,11 @@ impl HeaderGroth {
         // TODO: Impl From<u32> in Arkworks
         let n8q: u32 = u32::deserialize_uncompressed(&mut reader)?;
         // group order r of Bn254
-        let q = BigInteger256::deserialize_uncompressed(&mut reader)?;
+        let q = <E::BaseField as PrimeField>::BigInt::deserialize_uncompressed(&mut reader)?;
 
         let n8r: u32 = u32::deserialize_uncompressed(&mut reader)?;
         // Prime field modulus
-        let r = BigInteger256::deserialize_uncompressed(&mut reader)?;
+        let r = <E::ScalarField as PrimeField>::BigInt::deserialize_uncompressed(&mut reader)?;
 
         let n_vars = u32::deserialize_uncompressed(&mut reader)? as usize;
         let n_public = u32::deserialize_uncompressed(&mut reader)? as usize;
@@ -301,7 +320,7 @@ impl HeaderGroth {
         let domain_size: u32 = u32::deserialize_uncompressed(&mut reader)?;
         let power = log2(domain_size as usize);
 
-        let verifying_key = ZVerifyingKey::new(&mut reader)?;
+        let verifying_key = ZVerifyingKey::<E>::new(&mut reader)?;
 
         Ok(Self {
             n8q,
@@ -319,52 +338,59 @@ impl HeaderGroth {
 
 // need to divide by R, since snarkjs outputs the zkey with coefficients
 // multiplieid by R^2
-fn deserialize_field_fr<R: Read>(reader: &mut R) -> IoResult<Fr> {
-    let bigint = BigInteger256::deserialize_uncompressed(reader)?;
-    Ok(Fr::new_unchecked(Fr::new_unchecked(bigint).into_bigint()))
+fn deserialize_field_fr<R: Read, F: PrimeField>(reader: &mut R) -> IoResult<F> {
+    // let bigint = F::BigInt::deserialize_uncompressed(reader)?;
+    // Ok(F::new_unchecked(F::new_unchecked(bigint).into_bigint()))
+
+    let f = F::deserialize_uncompressed(reader)?;
+    Ok(f)
 }
 
 // skips the multiplication by R because Circom points are already in Montgomery form
-fn deserialize_field<R: Read>(reader: &mut R) -> IoResult<Fq> {
-    let bigint = BigInteger256::deserialize_uncompressed(reader)?;
+// fn deserialize_field<R: Read, F: PrimeField>(reader: &mut R) -> IoResult<F> {
+    // let bigint = F::BigInt::deserialize_uncompressed(reader)?;
     // if you use Fq::new it multiplies by R
-    Ok(Fq::new_unchecked(bigint))
+    // Ok(F::new_unchecked(bigint))
+// }
+
+// pub fn deserialize_field2<R: Read, F: PrimeField>(reader: &mut R) -> IoResult<F> {
+//     let c0 = deserialize_field(reader)?;
+//     let c1 = deserialize_field(reader)?;
+//     Ok(F::new(c0, c1))
+// }
+
+fn deserialize_g1<R: Read, E: Pairing>(reader: &mut R) -> IoResult<E::G1Affine> {
+    // let x = deserialize_field(reader)?;
+    // let y = deserialize_field(reader)?;
+    // let infinity = x.is_zero() && y.is_zero();
+    // if infinity {
+    //     Ok(E::G1Affine::identity())
+    // } else {
+    //     Ok(E::G1Affine::new_unchecked(x, y))
+    // }
+    let g = E::G1Affine::deserialize_uncompressed(reader)?;
+    Ok(g)
 }
 
-pub fn deserialize_field2<R: Read>(reader: &mut R) -> IoResult<Fq2> {
-    let c0 = deserialize_field(reader)?;
-    let c1 = deserialize_field(reader)?;
-    Ok(Fq2::new(c0, c1))
+fn deserialize_g2<R: Read, E: Pairing>(reader: &mut R) -> IoResult<E::G2Affine> {
+    // let f1 = deserialize_field2(reader)?;
+    // let f2 = deserialize_field2(reader)?;
+    // let infinity = f1.is_zero() && f2.is_zero();
+    // if infinity {
+    //     Ok(E::G2Affine::identity())
+    // } else {
+    //     Ok(E::G2Affine::new_unchecked(f1, f2))
+    // }
+    let g = E::G2Affine::deserialize_uncompressed(reader)?;
+    Ok(g)
 }
 
-fn deserialize_g1<R: Read>(reader: &mut R) -> IoResult<G1Affine> {
-    let x = deserialize_field(reader)?;
-    let y = deserialize_field(reader)?;
-    let infinity = x.is_zero() && y.is_zero();
-    if infinity {
-        Ok(G1Affine::identity())
-    } else {
-        Ok(G1Affine::new_unchecked(x, y))
-    }
+fn deserialize_g1_vec<R: Read, E: Pairing>(reader: &mut R, n_vars: u32) -> IoResult<Vec<E::G1Affine>> {
+    (0..n_vars).map(|_| deserialize_g1::<R, E>(reader)).collect()
 }
 
-fn deserialize_g2<R: Read>(reader: &mut R) -> IoResult<G2Affine> {
-    let f1 = deserialize_field2(reader)?;
-    let f2 = deserialize_field2(reader)?;
-    let infinity = f1.is_zero() && f2.is_zero();
-    if infinity {
-        Ok(G2Affine::identity())
-    } else {
-        Ok(G2Affine::new_unchecked(f1, f2))
-    }
-}
-
-fn deserialize_g1_vec<R: Read>(reader: &mut R, n_vars: u32) -> IoResult<Vec<G1Affine>> {
-    (0..n_vars).map(|_| deserialize_g1(reader)).collect()
-}
-
-fn deserialize_g2_vec<R: Read>(reader: &mut R, n_vars: u32) -> IoResult<Vec<G2Affine>> {
-    (0..n_vars).map(|_| deserialize_g2(reader)).collect()
+fn deserialize_g2_vec<R: Read, E: Pairing>(reader: &mut R, n_vars: u32) -> IoResult<Vec<E::G2Affine>> {
+    (0..n_vars).map(|_| deserialize_g2::<R, E>(reader)).collect()
 }
 
 #[cfg(test)]
