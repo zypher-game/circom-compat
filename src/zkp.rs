@@ -16,7 +16,7 @@ use wasmer::{Module, Store};
 
 use crate::{
     circom::{R1CSFile, R1CS},
-    read_zkey, CircomBuilder, CircomConfig, CircomReduction, WitnessCalculator,
+    zkey_bls12_381::read_zkey as read_bls12_381_zkey, zkey_bn254::read_zkey as read_bn254_zkey, CircomBuilder, CircomConfig, CircomReduction, WitnessCalculator,
 };
 
 type Result<T> = core::result::Result<T, Error>;
@@ -31,7 +31,33 @@ pub fn generate_bn254_params(
     zkey: &str,
     convert: Option<&str>,
 ) -> Result<()> {
-    generate_params::<Bn254>(wasm, r1cs, zkey, convert)
+    if let Some(path) = convert {
+        let mut zkey_file = File::open(zkey)?;
+        let (prover_key, _) = read_bn254_zkey::<File>(&mut zkey_file)?;
+        let mut pk_bytes = vec![];
+        prover_key
+            .serialize_compressed(&mut pk_bytes)
+            .map_err(|_| anyhow!("Infallible point"))?;
+        std::fs::write(path, pk_bytes)?;
+    } else {
+        let config = CircomConfig::<Bn254_Fr>::new(wasm, r1cs)
+            .map_err(|_| anyhow!("Failed to new circom config"))?;
+
+        let builder = CircomBuilder::new(config);
+        let circom = builder.setup();
+        let mut rng = ChaChaRng::from_entropy();
+        let params = Groth16::<Bn254, CircomReduction>::generate_random_parameters_with_reduction(
+            circom, &mut rng,
+        )?;
+
+        let mut pk_bytes = vec![];
+        params
+            .serialize_compressed(&mut pk_bytes)
+            .map_err(|_| anyhow!("Infallible point"))?;
+        std::fs::write(zkey, pk_bytes)?;
+    }
+
+    Ok(())
 }
 
 pub fn generate_bls12_381_params(
@@ -40,25 +66,33 @@ pub fn generate_bls12_381_params(
     zkey: &str,
     convert: Option<&str>,
 ) -> Result<()> {
-    generate_params::<Bls12_381>(wasm, r1cs, zkey, convert)
-}
+    if let Some(path) = convert {
+        let mut zkey_file = File::open(zkey)?;
+        let (prover_key, _) = read_bls12_381_zkey::<File>(&mut zkey_file)?;
+        let mut pk_bytes = vec![];
+        prover_key
+            .serialize_compressed(&mut pk_bytes)
+            .map_err(|_| anyhow!("Infallible point"))?;
+        std::fs::write(path, pk_bytes)?;
+    } else {
+        let config = CircomConfig::<Bls12_381_Fr>::new(wasm, r1cs)
+            .map_err(|_| anyhow!("Failed to new circom config"))?;
 
-pub fn init_bn254_config(
-    wasm: &str,
-    r1cs: &str,
-    zkey: &str,
-    only_pk: bool,
-) -> Result<(ProvingKey<Bn254>, CircomConfig<Bn254_Fr>)> {
-    init_config::<Bn254>(wasm, r1cs, zkey, only_pk)
-}
+        let builder = CircomBuilder::new(config);
+        let circom = builder.setup();
+        let mut rng = ChaChaRng::from_entropy();
+        let params = Groth16::<Bls12_381, CircomReduction>::generate_random_parameters_with_reduction(
+            circom, &mut rng,
+        )?;
 
-pub fn init_bls12_381_config(
-    wasm: &str,
-    r1cs: &str,
-    zkey: &str,
-    only_pk: bool,
-) -> Result<(ProvingKey<Bls12_381>, CircomConfig<Bls12_381_Fr>)> {
-    init_config::<Bls12_381>(wasm, r1cs, zkey, only_pk)
+        let mut pk_bytes = vec![];
+        params
+            .serialize_compressed(&mut pk_bytes)
+            .map_err(|_| anyhow!("Infallible point"))?;
+        std::fs::write(zkey, pk_bytes)?;
+    }
+
+    Ok(())
 }
 
 pub fn init_bn254_from_bytes(
@@ -67,7 +101,30 @@ pub fn init_bn254_from_bytes(
     zkey: &[u8],
     only_pk: bool,
 ) -> Result<(ProvingKey<Bn254>, CircomConfig<Bn254_Fr>)> {
-    init_from_bytes::<Bn254>(wasm, r1cs, zkey, only_pk)
+    let mut store = Store::default();
+    let module = Module::new(&store, wasm)?;
+    let wtns = WitnessCalculator::from_module(&mut store, module)
+        .map_err(|_| anyhow!("Failed to calculate circom witness"))?;
+
+    let reader = BufReader::new(Cursor::new(r1cs));
+    let r1cs_file = R1CSFile::new(reader)?;
+
+    let cfg = CircomConfig {
+        store,
+        wtns,
+        r1cs: R1CS::from(r1cs_file),
+        sanity_check: false,
+    };
+
+    let mut zkey_reader = BufReader::new(Cursor::new(zkey));
+    let prover_key = if only_pk {
+        ProvingKey::deserialize_compressed(zkey_reader)?
+    } else {
+        let (prover_key, _) = read_bn254_zkey(&mut zkey_reader)?;
+        prover_key
+    };
+
+    Ok((prover_key, cfg))
 }
 
 pub fn init_bls12_381_from_bytes(
@@ -76,7 +133,30 @@ pub fn init_bls12_381_from_bytes(
     zkey: &[u8],
     only_pk: bool,
 ) -> Result<(ProvingKey<Bls12_381>, CircomConfig<Bls12_381_Fr>)> {
-    init_from_bytes::<Bls12_381>(wasm, r1cs, zkey, only_pk)
+    let mut store = Store::default();
+    let module = Module::new(&store, wasm)?;
+    let wtns = WitnessCalculator::from_module(&mut store, module)
+        .map_err(|_| anyhow!("Failed to calculate circom witness"))?;
+
+    let reader = BufReader::new(Cursor::new(r1cs));
+    let r1cs_file = R1CSFile::new(reader)?;
+
+    let cfg = CircomConfig {
+        store,
+        wtns,
+        r1cs: R1CS::from(r1cs_file),
+        sanity_check: false,
+    };
+
+    let mut zkey_reader = BufReader::new(Cursor::new(zkey));
+    let prover_key = if only_pk {
+        ProvingKey::deserialize_compressed(zkey_reader)?
+    } else {
+        let (prover_key, _) = read_bls12_381_zkey(&mut zkey_reader)?;
+        prover_key
+    };
+
+    Ok((prover_key, cfg))
 }
 
 pub fn prove_bn254(
@@ -109,93 +189,6 @@ pub fn verify_bls12_381(
     proof: &Proof<Bls12_381>,
 ) -> Result<bool> {
     verify::<Bls12_381>(params, publics, proof)
-}
-
-pub fn generate_params<E: Pairing>(
-    wasm: &str,
-    r1cs: &str,
-    zkey: &str,
-    convert: Option<&str>,
-) -> Result<()> {
-    if let Some(path) = convert {
-        let mut zkey_file = File::open(zkey)?;
-        let (prover_key, _) = read_zkey::<File, E>(&mut zkey_file)?;
-        let mut pk_bytes = vec![];
-        prover_key
-            .serialize_compressed(&mut pk_bytes)
-            .map_err(|_| anyhow!("Infallible point"))?;
-        std::fs::write(path, pk_bytes)?;
-    } else {
-        let config = CircomConfig::<E::ScalarField>::new(wasm, r1cs)
-            .map_err(|_| anyhow!("Failed to new circom config"))?;
-
-        let builder = CircomBuilder::new(config);
-        let circom = builder.setup();
-        let mut rng = ChaChaRng::from_entropy();
-        let params = Groth16::<E, CircomReduction>::generate_random_parameters_with_reduction(
-            circom, &mut rng,
-        )?;
-
-        let mut pk_bytes = vec![];
-        params
-            .serialize_compressed(&mut pk_bytes)
-            .map_err(|_| anyhow!("Infallible point"))?;
-        std::fs::write(zkey, pk_bytes)?;
-    }
-
-    Ok(())
-}
-
-pub fn init_config<E: Pairing>(
-    wasm: &str,
-    r1cs: &str,
-    zkey: &str,
-    only_pk: bool,
-) -> Result<(ProvingKey<E>, CircomConfig<E::ScalarField>)> {
-    let cfg = CircomConfig::<E::ScalarField>::new(wasm, r1cs)
-        .map_err(|_| anyhow!("Failed to new circom config"))?;
-
-    let mut zkey_file = File::open(zkey)?;
-    let prover_key = if only_pk {
-        ProvingKey::<E>::deserialize_compressed(zkey_file)?
-    } else {
-        let (prover_key, _) = read_zkey(&mut zkey_file)?;
-        prover_key
-    };
-
-    Ok((prover_key, cfg))
-}
-
-pub fn init_from_bytes<E: Pairing>(
-    wasm: &[u8],
-    r1cs: &[u8],
-    zkey: &[u8],
-    only_pk: bool,
-) -> Result<(ProvingKey<E>, CircomConfig<E::ScalarField>)> {
-    let mut store = Store::default();
-    let module = Module::new(&store, wasm)?;
-    let wtns = WitnessCalculator::from_module(&mut store, module)
-        .map_err(|_| anyhow!("Failed to calculate circom witness"))?;
-
-    let reader = BufReader::new(Cursor::new(r1cs));
-    let r1cs_file = R1CSFile::<E::ScalarField>::new(reader)?;
-
-    let cfg = CircomConfig {
-        store,
-        wtns,
-        r1cs: R1CS::from(r1cs_file),
-        sanity_check: false,
-    };
-
-    let mut zkey_reader = BufReader::new(Cursor::new(zkey));
-    let prover_key = if only_pk {
-        ProvingKey::<E>::deserialize_compressed(zkey_reader)?
-    } else {
-        let (prover_key, _) = read_zkey(&mut zkey_reader)?;
-        prover_key
-    };
-
-    Ok((prover_key, cfg))
 }
 
 pub fn prove<E: Pairing>(
