@@ -256,6 +256,47 @@ pub fn proofs_to_abi_bytes(
     Ok((pi_bytes, proof_bytes))
 }
 
+pub fn multiple_proofs_to_abi_bytes(
+    publics: &[Vec<Bn254_Fr>],
+    proofs: &[Proof<Bn254>],
+) -> Result<(Vec<u8>, Vec<u8>)> {
+    let mut m_pi_token = vec![];
+    for public in publics {
+        let mut pi_token = vec![];
+        for x in public.iter() {
+            pi_token.push(parse_filed_to_token(x));
+        }
+        m_pi_token.push(Token::FixedArray(pi_token));
+    }
+    let l_pi_token = Token::Array(m_pi_token);
+
+    let mut m_pr_token = vec![];
+    for proof in proofs {
+        let mut proof_token = vec![];
+        let (ax, ay) = proof.a.xy().ok_or_else(|| anyhow!("Infallible point"))?;
+        proof_token.push(parse_filed_to_token(ax));
+        proof_token.push(parse_filed_to_token(ay));
+
+        let (bx, by) = proof.b.xy().ok_or_else(|| anyhow!("Infallible point"))?;
+        proof_token.push(parse_filed_to_token(&bx.c1));
+        proof_token.push(parse_filed_to_token(&bx.c0));
+        proof_token.push(parse_filed_to_token(&by.c1));
+        proof_token.push(parse_filed_to_token(&by.c0));
+
+        let (cx, cy) = proof.c.xy().ok_or_else(|| anyhow!("Infallible point"))?;
+        proof_token.push(parse_filed_to_token(cx));
+        proof_token.push(parse_filed_to_token(cy));
+
+        m_pr_token.push(Token::FixedArray(proof_token));
+    }
+    let l_pr_token = Token::Array(m_pr_token);
+
+    let pi_bytes = encode(&[l_pi_token]);
+    let proof_bytes = encode(&[l_pr_token]);
+
+    Ok((pi_bytes, proof_bytes))
+}
+
 pub fn proofs_to_raw_bytes(
     publics: &[Bls12_381_Fr],
     proof: &Proof<Bls12_381>,
