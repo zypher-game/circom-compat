@@ -101,29 +101,8 @@ pub fn init_bn254_from_bytes(
     zkey: &[u8],
     only_pk: bool,
 ) -> Result<(ProvingKey<Bn254>, CircomConfig<Bn254_Fr>)> {
-    let mut store = Store::default();
-    let module = Module::new(&store, wasm)?;
-    let wtns = WitnessCalculator::from_module(&mut store, module)
-        .map_err(|_| anyhow!("Failed to calculate circom witness"))?;
-
-    let reader = BufReader::new(Cursor::new(r1cs));
-    let r1cs_file = R1CSFile::new(reader)?;
-
-    let cfg = CircomConfig {
-        store,
-        wtns,
-        r1cs: R1CS::from(r1cs_file),
-        sanity_check: false,
-    };
-
-    let mut zkey_reader = BufReader::new(Cursor::new(zkey));
-    let prover_key = if only_pk {
-        ProvingKey::deserialize_compressed(zkey_reader)?
-    } else {
-        let (prover_key, _) = read_bn254_zkey(&mut zkey_reader)?;
-        prover_key
-    };
-
+    let prover_key = init_bn254_params_from_bytes(zkey, only_pk)?;
+    let cfg = init_bn254_circom_from_bytes(wasm, r1cs)?;
     Ok((prover_key, cfg))
 }
 
@@ -133,6 +112,15 @@ pub fn init_bls12_381_from_bytes(
     zkey: &[u8],
     only_pk: bool,
 ) -> Result<(ProvingKey<Bls12_381>, CircomConfig<Bls12_381_Fr>)> {
+    let prover_key = init_bls12_381_params_from_bytes(zkey, only_pk)?;
+    let cfg = init_bls12_381_circom_from_bytes(wasm, r1cs)?;
+    Ok((prover_key, cfg))
+}
+
+pub fn init_bn254_circom_from_bytes(
+    wasm: &[u8],
+    r1cs: &[u8],
+) -> Result<CircomConfig<Bn254_Fr>> {
     let mut store = Store::default();
     let module = Module::new(&store, wasm)?;
     let wtns = WitnessCalculator::from_module(&mut store, module)
@@ -148,6 +136,50 @@ pub fn init_bls12_381_from_bytes(
         sanity_check: false,
     };
 
+    Ok(cfg)
+}
+
+pub fn init_bls12_381_circom_from_bytes(
+    wasm: &[u8],
+    r1cs: &[u8],
+) -> Result<CircomConfig<Bls12_381_Fr>> {
+    let mut store = Store::default();
+    let module = Module::new(&store, wasm)?;
+    let wtns = WitnessCalculator::from_module(&mut store, module)
+        .map_err(|_| anyhow!("Failed to calculate circom witness"))?;
+
+    let reader = BufReader::new(Cursor::new(r1cs));
+    let r1cs_file = R1CSFile::new(reader)?;
+
+    let cfg = CircomConfig {
+        store,
+        wtns,
+        r1cs: R1CS::from(r1cs_file),
+        sanity_check: false,
+    };
+
+    Ok(cfg)
+}
+
+pub fn init_bn254_params_from_bytes(
+    zkey: &[u8],
+    only_pk: bool,
+) -> Result<ProvingKey<Bn254>> {
+    let mut zkey_reader = BufReader::new(Cursor::new(zkey));
+    let prover_key = if only_pk {
+        ProvingKey::deserialize_compressed(zkey_reader)?
+    } else {
+        let (prover_key, _) = read_bn254_zkey(&mut zkey_reader)?;
+        prover_key
+    };
+
+    Ok(prover_key)
+}
+
+pub fn init_bls12_381_params_from_bytes(
+    zkey: &[u8],
+    only_pk: bool,
+) -> Result<ProvingKey<Bls12_381>> {
     let mut zkey_reader = BufReader::new(Cursor::new(zkey));
     let prover_key = if only_pk {
         ProvingKey::deserialize_compressed(zkey_reader)?
@@ -156,7 +188,7 @@ pub fn init_bls12_381_from_bytes(
         prover_key
     };
 
-    Ok((prover_key, cfg))
+    Ok(prover_key)
 }
 
 pub fn prove_bn254(
