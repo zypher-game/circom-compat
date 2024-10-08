@@ -10,7 +10,7 @@ pub use circom::{CircomBuilder, CircomCircuit, CircomConfig, CircomReduction};
 #[cfg(feature = "ethereum")]
 pub mod ethereum;
 
-pub mod zkey_bn254;
 pub mod zkey_bls12_381;
+pub mod zkey_bn254;
 
 pub mod zkp;

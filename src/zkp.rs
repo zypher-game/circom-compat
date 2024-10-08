@@ -7,7 +7,7 @@ use ark_ff::{BigInteger, PrimeField};
 use ark_groth16::{Groth16, Proof, ProvingKey, VerifyingKey};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_snark::SNARK;
-use ethabi::{encode, ethereum_types::U256, Token};
+use ethabi::{decode, encode, ethereum_types::U256, ParamType, Token};
 use num_bigint::BigInt;
 use rand_chacha::{rand_core::SeedableRng, ChaChaRng};
 use std::io::{BufReader, Cursor};
@@ -16,7 +16,9 @@ use wasmer::{Module, Store};
 
 use crate::{
     circom::{R1CSFile, R1CS},
-    zkey_bls12_381::read_zkey as read_bls12_381_zkey, zkey_bn254::read_zkey as read_bn254_zkey, CircomBuilder, CircomConfig, CircomReduction, WitnessCalculator,
+    zkey_bls12_381::read_zkey as read_bls12_381_zkey,
+    zkey_bn254::read_zkey as read_bn254_zkey,
+    CircomBuilder, CircomConfig, CircomReduction, WitnessCalculator,
 };
 
 type Result<T> = core::result::Result<T, Error>;
@@ -81,9 +83,10 @@ pub fn generate_bls12_381_params(
         let builder = CircomBuilder::new(config);
         let circom = builder.setup();
         let mut rng = ChaChaRng::from_entropy();
-        let params = Groth16::<Bls12_381, CircomReduction>::generate_random_parameters_with_reduction(
-            circom, &mut rng,
-        )?;
+        let params =
+            Groth16::<Bls12_381, CircomReduction>::generate_random_parameters_with_reduction(
+                circom, &mut rng,
+            )?;
 
         let mut pk_bytes = vec![];
         params
@@ -117,10 +120,7 @@ pub fn init_bls12_381_from_bytes(
     Ok((prover_key, cfg))
 }
 
-pub fn init_bn254_circom_from_bytes(
-    wasm: &[u8],
-    r1cs: &[u8],
-) -> Result<CircomConfig<Bn254_Fr>> {
+pub fn init_bn254_circom_from_bytes(wasm: &[u8], r1cs: &[u8]) -> Result<CircomConfig<Bn254_Fr>> {
     let mut store = Store::default();
     let module = Module::new(&store, wasm)?;
     let wtns = WitnessCalculator::from_module(&mut store, module)
@@ -161,10 +161,7 @@ pub fn init_bls12_381_circom_from_bytes(
     Ok(cfg)
 }
 
-pub fn init_bn254_params_from_bytes(
-    zkey: &[u8],
-    only_pk: bool,
-) -> Result<ProvingKey<Bn254>> {
+pub fn init_bn254_params_from_bytes(zkey: &[u8], only_pk: bool) -> Result<ProvingKey<Bn254>> {
     let mut zkey_reader = BufReader::new(Cursor::new(zkey));
     let prover_key = if only_pk {
         ProvingKey::deserialize_compressed(zkey_reader)?
@@ -258,7 +255,7 @@ fn parse_filed_to_token<F: PrimeField>(f: &F) -> Token {
     Token::Uint(U256::from_big_endian(&bytes))
 }
 
-pub fn proofs_to_abi_bytes(
+pub fn publics_proof_to_abi_bytes(
     publics: &[Bn254_Fr],
     proof: &Proof<Bn254>,
 ) -> Result<(Vec<u8>, Vec<u8>)> {
@@ -288,20 +285,24 @@ pub fn proofs_to_abi_bytes(
     Ok((pi_bytes, proof_bytes))
 }
 
-pub fn multiple_proofs_to_abi_bytes(
-    publics: &[Vec<Bn254_Fr>],
-    proofs: &[Proof<Bn254>],
-) -> Result<(Vec<u8>, Vec<u8>)> {
-    let mut m_pi_token = vec![];
-    for public in publics {
-        let mut pi_token = vec![];
-        for x in public.iter() {
-            pi_token.push(parse_filed_to_token(x));
-        }
-        m_pi_token.push(Token::FixedArray(pi_token));
+pub fn multiple_publics_from_abi_bytes(bytes: &[u8]) -> Result<Vec<Bn254_Fr>> {
+    let mut input_tokens = decode(&[ParamType::Array(Box::new(ParamType::Uint(256)))], bytes)?;
+    let tokens = input_tokens
+        .pop()
+        .ok_or_else(|| anyhow!("Infallible point"))?
+        .into_array()
+        .ok_or_else(|| anyhow!("Infallible point"))?;
+    let mut publics = vec![];
+    for token in tokens {
+        let mut bytes = [0u8; 32];
+        token.into_uint().unwrap().to_big_endian(&mut bytes);
+        publics.push(Bn254_Fr::from_be_bytes_mod_order(&bytes));
     }
-    let l_pi_token = Token::Array(m_pi_token);
 
+    Ok(publics)
+}
+
+pub fn multiple_proofs_to_abi_bytes(proofs: &[Proof<Bn254>]) -> Result<Vec<u8>> {
     let mut m_pr_token = vec![];
     for proof in proofs {
         let mut proof_token = vec![];
@@ -322,11 +323,9 @@ pub fn multiple_proofs_to_abi_bytes(
         m_pr_token.push(Token::FixedArray(proof_token));
     }
     let l_pr_token = Token::Array(m_pr_token);
-
-    let pi_bytes = encode(&[l_pi_token]);
     let proof_bytes = encode(&[l_pr_token]);
 
-    Ok((pi_bytes, proof_bytes))
+    Ok(proof_bytes)
 }
 
 pub fn proofs_to_raw_bytes(
