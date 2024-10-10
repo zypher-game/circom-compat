@@ -360,3 +360,59 @@ pub fn proofs_to_raw_bytes(
 
     Ok((pi_token, [pa, pb, pc]))
 }
+
+pub fn decode_multiple_prove_publics(bytes: &[u8], size: usize) -> Result<Vec<Vec<Bn254_Fr>>> {
+    let mut input_tokens = decode(
+        &[ParamType::Array(Box::new(ParamType::FixedArray(
+            Box::new(ParamType::Uint(256)),
+            size,
+        )))],
+        bytes,
+    )?;
+    let tokens = input_tokens
+        .pop()
+        .ok_or_else(|| anyhow!("Infallible point"))?
+        .into_array()
+        .ok_or_else(|| anyhow!("Infallible point"))?;
+    let mut publics = vec![];
+    for token in tokens {
+        let ffs = token
+            .into_fixed_array()
+            .ok_or_else(|| anyhow!("Infallible point"))?;
+        let mut public = vec![];
+        for fs in ffs {
+            let mut bytes = [0u8; 32];
+            fs.into_uint().unwrap().to_big_endian(&mut bytes);
+            let f = Bn254_Fr::from_be_bytes_mod_order(&bytes);
+            public.push(f);
+        }
+
+        publics.push(public);
+    }
+
+    Ok(publics)
+}
+
+pub fn decode_prove_publics(bytes: &[u8], size: usize) -> Result<Vec<Bn254_Fr>> {
+    let mut input_tokens = decode(
+        &[ParamType::FixedArray(
+            Box::new(ParamType::Uint(256)),
+            size,
+        )],
+        bytes,
+    )?;
+    let tokens = input_tokens
+        .pop()
+        .ok_or_else(|| anyhow!("Infallible point"))?
+        .into_fixed_array()
+        .ok_or_else(|| anyhow!("Infallible point"))?;
+    let mut publics = vec![];
+    for token in tokens {
+        let mut bytes = [0u8; 32];
+        token.into_uint().unwrap().to_big_endian(&mut bytes);
+        let f = Bn254_Fr::from_be_bytes_mod_order(&bytes);
+        publics.push(f);
+    }
+
+    Ok(publics)
+}
