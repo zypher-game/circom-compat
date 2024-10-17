@@ -255,6 +255,25 @@ fn parse_filed_to_token<F: PrimeField>(f: &F) -> Token {
     Token::Uint(U256::from_big_endian(&bytes))
 }
 
+pub fn proof_to_abi_bytes(proof: &Proof<Bn254>) -> Result<Vec<u8>> {
+    let mut proof_token = vec![];
+    let (ax, ay) = proof.a.xy().ok_or_else(|| anyhow!("Infallible point"))?;
+    proof_token.push(parse_filed_to_token(ax));
+    proof_token.push(parse_filed_to_token(ay));
+
+    let (bx, by) = proof.b.xy().ok_or_else(|| anyhow!("Infallible point"))?;
+    proof_token.push(parse_filed_to_token(&bx.c1));
+    proof_token.push(parse_filed_to_token(&bx.c0));
+    proof_token.push(parse_filed_to_token(&by.c1));
+    proof_token.push(parse_filed_to_token(&by.c0));
+
+    let (cx, cy) = proof.c.xy().ok_or_else(|| anyhow!("Infallible point"))?;
+    proof_token.push(parse_filed_to_token(cx));
+    proof_token.push(parse_filed_to_token(cy));
+
+    Ok(encode(&proof_token))
+}
+
 pub fn publics_proof_to_abi_bytes(
     publics: &[Bn254_Fr],
     proof: &Proof<Bn254>,
